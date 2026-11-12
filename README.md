@@ -4,9 +4,9 @@
 <div align="center">
 
 
-# 🎯 SkillMatch AI Server
+# 🎯 JobMatch AI Server
 
-### The backend engine for SkillMatch — jobs, profiles, applications, interviews, AI workflows & notifications.
+### The backend engine for JobMatch — jobs, profiles, applications, interviews, AI workflows & notifications.
 
 <p>
   <img alt="Status" src="https://img.shields.io/badge/Status-Active%20Development-6E56CF?style=for-the-badge" />
@@ -29,11 +29,11 @@
 </div>
 
 ---
-## Live Link: https://skillmatchai-phi.vercel.app
+## Live Link: https://jobmatch-ai-rust.vercel.app/
 
 ## 🚀 Project Overview
 
-**SkillMatch AI Server** is the backend service that powers the SkillMatch web application. It provides a single API layer for:
+**JobMatch AI Server** is the backend service that powers the JobMatch web application. It provides a single API layer for:
 - job posting and browsing
 - candidate profiles and resume processing
 - applications + recruiter hiring pipeline
@@ -243,7 +243,7 @@ To make the server more production‑secure, consider:
 
 ### 1) Install dependencies
 ```bash
-cd SkillMatch-AI-Server
+cd JobMatch-AI-Server
 npm ci
 ```
 
@@ -295,7 +295,7 @@ Server runs on: `http://localhost:5001`
 ## 📂 Project Structure
 
 ```text
-SkillMatch-AI-Server/
+JobMatch-AI-Server/
 ├─ api/                      # Vercel serverless entry
 │  └─ index.js
 ├─ config/                   # env + DB utilities
@@ -341,7 +341,7 @@ This backend is Vercel-ready:
 - `vercel.json` routes all traffic to the exported Express app in `index.js`, including `/`, `/health`, and `/api/*`.
 
 Steps:
-1. Create a Vercel project and import `SkillMatch-AI-Server/`.
+1. Create a Vercel project and import `JobMatch-AI-Server/`.
    - If Vercel shows `No Output Directory named "public" found`, clear the Project Settings **Output Directory** (leave it blank). This repo also includes an empty `public/` folder for compatibility.
 2. Add environment variables from `.env.example`.
 3. Deploy.
@@ -379,7 +379,7 @@ The API allows browser requests from any origin and accepts `Authorization` and 
 ## 👨‍💻 Author & Credits
 
 - **Author:** Your Name
-- **Project:** SkillMatch AI Server
+- **Project:** JobMatch AI Server
 - **Credits:** Express, MongoDB, Firebase Admin, Gemini SDK, and open-source community
 
 
