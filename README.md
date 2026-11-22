@@ -210,6 +210,15 @@ Body:
 
 ---
 
+#### 4) Preview resume details for profile import (requires token)
+**POST** `/api/resume/upload`
+
+Send `multipart/form-data` with a `resume` file and `profileImport=true`. Supported formats are PDF, DOC, DOCX, and TXT (maximum 10 MB).
+
+When `profileImport=true`, the endpoint returns extracted profile fields for review without saving the resume or changing the profile. The client applies selected values to the profile draft, which is persisted only when the user saves the profile.
+
+---
+
 ## 🔐 Authentication & Security
 
 ### 🔑 Token handling
