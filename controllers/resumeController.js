@@ -12,7 +12,11 @@ function extractFallbackFromText(text) {
     "PostgreSQL", "MySQL", "Firebase", "Python", "Java", "C++", "C", "Tailwind CSS",
     "Docker", "Kubernetes", "AWS", "Azure", "GCP", "Git", "Redux", "HTML", "CSS",
   ];
-  const technologies = knownTech.filter((t) => lower.includes(t.toLowerCase()));
+  const technologies = knownTech.filter((technology) => (
+    technology === "C"
+      ? /(^|[^a-z0-9+#])C([^a-z0-9+#]|$)/i.test(source)
+      : lower.includes(technology.toLowerCase())
+  ));
 
   return {
     skills: technologies,
@@ -27,11 +31,15 @@ function extractFallbackFromText(text) {
  */
 async function uploadResume(req, res) {
   try {
-    const { candidateId } = req.body;
+    const profileImport = req.body.profileImport === "true";
+    const candidateId = profileImport ? req.user?.uid : req.body.candidateId;
     const file = req.file;
 
     if (!candidateId) {
-      return res.status(400).json({ success: false, message: "candidateId is required" });
+      return res.status(profileImport ? 401 : 400).json({
+        success: false,
+        message: profileImport ? "Authentication is required" : "candidateId is required",
+      });
     }
     if (!file) {
       return res.status(400).json({ success: false, message: "Resume file is required" });
@@ -46,9 +54,35 @@ async function uploadResume(req, res) {
     try {
       extractedData = await extractSkillsFromResume(extractedText);
     } catch (aiError) {
-// error handled silently
-    extractedData = extractFallbackFromText(extractedText);
+      extractedData = extractFallbackFromText(extractedText);
       warning = "AI extraction was unavailable, so basic keyword extraction was used.";
+    }
+
+    if (profileImport) {
+      return res.status(200).json({
+        success: true,
+        message: "Resume analyzed for profile review",
+        warning: warning || undefined,
+        data: {
+          ...extractedData,
+          profile: {
+            displayName: extractedData.displayName || "",
+            title: extractedData.title || extractedData.role_titles?.[0] || "",
+            location: extractedData.location || "",
+            phone: extractedData.phone || "",
+            bio: extractedData.bio || "",
+            experience: extractedData.experience || [],
+            education: extractedData.education || [],
+            projects: extractedData.projects || [],
+            certificates: extractedData.certificates || [],
+            linkedin: extractedData.linkedin || "",
+            github: extractedData.github || "",
+            twitter: extractedData.twitter || "",
+            website: extractedData.website || "",
+            portfolioUrl: extractedData.portfolioUrl || "",
+          },
+        },
+      });
     }
 
     const db = getDB();
@@ -112,7 +146,6 @@ async function uploadResume(req, res) {
     });
 
   } catch (error) {
-    // error handled silently
     res.status(500).json({
       success: false,
       message: error.message || "Server error during resume processing"
