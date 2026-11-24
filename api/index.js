@@ -2,7 +2,14 @@ import "../config/dotenv.js";
 import express from "express";
 import cors from "cors";
 
-import { connectDB, getDB } from "../config/db.js";
+import {
+  connectDB,
+  getDB,
+  getDbState,
+  isDbUnavailableError,
+  pingDB,
+  DB_UNAVAILABLE_MESSAGE,
+} from "../config/db.js";
 import { loadEnv } from "../config/env.js";
 import { migrateDemoPasswords } from "../services/passwordMigration.js";
 
@@ -47,13 +54,13 @@ function ensureIndexesOnce() {
 
 const { env, errors, warnings, isProd } = loadEnv();
 
-if (warnings.length) {
-  // Warnings are collected but not emitted to console in production
+// Surface configuration problems instead of swallowing them: a missing or
+// wrong env var used to fail every request with no clue in the logs.
+if (warnings.length && !isProd) {
+  warnings.forEach((msg) => console.warn(`[env] warning: ${msg}`));
 }
 if (errors.length) {
-  errors.forEach((msg) => {
-    // Env errors are collected; fatal errors will cause 500 response
-  });
+  errors.forEach((msg) => console.error(`[env] error: ${msg}`));
 }
 
 const hasFatalEnv = errors.length > 0;
@@ -81,10 +88,47 @@ app.get("/", (req, res) => {
   });
 });
 
-app.get("/health", (req, res) => {
-  res.status(200).json({
+// Liveness stays HTTP 200 (documented contract). `db` is derived from the
+// connection state rather than a timed ping: a cold Atlas connect takes ~6s and
+// must not be misread as "down", while a failed attempt answers immediately.
+app.get("/health", async (req, res) => {
+  const state = getDbState();
+
+  if (state === "error") {
+    return res.status(200).json({
+      success: true,
+      status: "degraded",
+      db: "down",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  if (state === "idle") {
+    // Warm the connection in the background; the next check reports the result.
+    connectDB().catch(() => {});
+  }
+
+  if (state !== "connected") {
+    return res.status(200).json({
+      success: true,
+      status: "starting",
+      db: "connecting",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Connected: confirm the handle still answers before claiming "up".
+  let db = "up";
+  try {
+    await pingDB();
+  } catch {
+    db = "down";
+  }
+
+  return res.status(200).json({
     success: true,
-    status: "ok",
+    status: db === "up" ? "ok" : "degraded",
+    db,
     timestamp: new Date().toISOString(),
   });
 });
@@ -177,12 +221,21 @@ app.use((err, req, res, next) => {
     });
   }
 
-  const status = err.status || 500;
+  const status = err.status || (isDbUnavailableError(err) ? 503 : 500);
+  const message =
+    err.userMessage ||
+    (status === 503
+      ? DB_UNAVAILABLE_MESSAGE
+      : status === 500
+        ? "Internal server error"
+        : err.message);
+
   res.status(status).json({
     success: false,
-    message: status === 500 ? "Internal server error" : err.message,
+    message,
     error: !isProd ? err.message : undefined,
-    stack: !isProd ? err.stack : undefined,
+    // Stacks are noise for expected failures (e.g. the database being down).
+    stack: !isProd && status === 500 ? err.stack : undefined,
   });
 });
 
