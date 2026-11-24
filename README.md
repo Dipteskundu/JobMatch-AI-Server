@@ -347,13 +347,16 @@ curl -X POST http://localhost:5001/api/auth/sync-user \
 
 ### ✅ Deploy to Vercel (recommended)
 This backend is Vercel-ready:
-- `vercel.json` routes all traffic to the exported Express app in `index.js`, including `/`, `/health`, and `/api/*`.
+- `vercel.json` routes requests to the exported Express app in `api/index.js`, including `/`, `/health`, and `/api/*`. The root `index.js` remains the local development entry point.
 
 Steps:
-1. Create a Vercel project and import `JobMatch-AI-Server/`.
-   - If Vercel shows `No Output Directory named "public" found`, clear the Project Settings **Output Directory** (leave it blank). This repo also includes an empty `public/` folder for compatibility.
-2. Add environment variables from `.env.example`.
-3. Deploy.
+1. Create a separate Vercel project from this Git repository and use the repository root as the project root.
+2. Leave the Output Directory unset. Use Node.js `26.x`, `npm ci`, and `npm run build`.
+3. Set `MONGODB_URI` and `JWT_SECRET`. Set `MONGO_DB_NAME` only if the default database name is not appropriate. Configure `GEMINI_API_KEY`, `FIREBASE_API_KEY`, and `FIREBASE_WEB_CLIENT_ID` for the features that need them.
+4. Resume uploads accept files up to 10 MiB, but Vercel's default request-body limit is 4.5 MB. To preserve the existing upload limit, enable Fluid Compute, set function memory to Performance (4 GB) on a Pro or Enterprise plan, and set `VERCEL_SUPPORT_LARGE_REQUEST_BODY=1` for the Preview and Production environments. Otherwise, requests above 4.5 MB may be rejected before reaching Express. See [Vercel Function request body limits](https://vercel.com/docs/functions/limitations#request-body-size).
+5. Deploy and set the frontend project's `NEXT_PUBLIC_API_BASE_URL` to this backend project's Vercel origin.
+
+Vercel's Node.js function instances are ephemeral. The API's in-memory rate-limit counters are per instance, not shared across all instances; use Vercel Firewall rate limiting or a shared store if a globally consistent limit is required.
 
 ### 🌍 Cross-origin API access
 The API allows browser requests from any origin and accepts `Authorization` and `Content-Type` headers. Public routes are available without an API key. Protected endpoints continue to require the existing user JWT, role, and ownership permissions. `/` and `/health` remain public.
