@@ -2,32 +2,43 @@
 
 import { getDB } from "../config/db.js";
 import { extractTextFromResume } from "../services/resumeParserService.js";
-import { extractSkillsFromResume } from "../services/aiSkillExtractionService.js";
+import { extractResumeProfile } from "../services/localResumeExtractionService.js";
 
-function extractFallbackFromText(text) {
-  const source = String(text || "");
-  const lower = source.toLowerCase();
-  const knownTech = [
-    "JavaScript", "TypeScript", "React", "Next.js", "Node.js", "Express", "MongoDB",
-    "PostgreSQL", "MySQL", "Firebase", "Python", "Java", "C++", "C", "Tailwind CSS",
-    "Docker", "Kubernetes", "AWS", "Azure", "GCP", "Git", "Redux", "HTML", "CSS",
-  ];
-  const technologies = knownTech.filter((technology) => (
-    technology === "C"
-      ? /(^|[^a-z0-9+#])C([^a-z0-9+#]|$)/i.test(source)
-      : lower.includes(technology.toLowerCase())
-  ));
+function getExtractionWarning(data) {
+  const missing = [];
+  if (!data.displayName) missing.push("name");
+  if (!data.skills.length) missing.push("skills");
+  if (!data.experience.length) missing.push("work history");
+  if (!data.education.length) missing.push("education");
+  if (!data.projects.length) missing.push("projects");
 
-  return {
-    skills: technologies,
-    experience_years: 0,
-    technologies,
-    role_titles: [],
-  };
+  return missing.length
+    ? `Local parsing could not confidently identify ${missing.join(", ")}. Review the detected details before applying them.`
+    : "";
+}
+
+function hasProfileDetails(data) {
+  return Boolean(
+    data.displayName ||
+    data.title ||
+    data.location ||
+    data.phone ||
+    data.bio ||
+    data.skills.length ||
+    data.experience.length ||
+    data.education.length ||
+    data.projects.length ||
+    data.certificates.length ||
+    data.linkedin ||
+    data.github ||
+    data.twitter ||
+    data.website ||
+    data.portfolioUrl
+  );
 }
 
 /**
- * Handle resume upload, parsing, AI extraction, and DB updates.
+ * Handle resume upload, local extraction, and DB updates.
  */
 async function uploadResume(req, res) {
   try {
@@ -48,14 +59,22 @@ async function uploadResume(req, res) {
     // 1. Extract raw text from the file
     const extractedText = await extractTextFromResume(file);
 
-    // 2. Perform AI skill extraction (fallback safely if AI is unavailable)
-    let extractedData;
-    let warning = "";
-    try {
-      extractedData = await extractSkillsFromResume(extractedText);
-    } catch (aiError) {
-      extractedData = extractFallbackFromText(extractedText);
-      warning = "AI extraction was unavailable, so basic keyword extraction was used.";
+    // Extraction is deterministic and local; no AI provider or API key is used.
+    const extractedData = extractResumeProfile(extractedText);
+    const warning = getExtractionWarning(extractedData);
+
+    if (!hasProfileDetails(extractedData)) {
+      return res.status(422).json({
+        success: false,
+        message: "No recognizable profile details were found. Try a resume with clearly labeled sections.",
+      });
+    }
+
+    if (!profileImport && !extractedData.skills.length && !extractedData.role_titles.length) {
+      return res.status(422).json({
+        success: false,
+        message: "No skills or job titles could be identified for matching. Add a clearly labeled Skills or Experience section and try again.",
+      });
     }
 
     if (profileImport) {
@@ -146,9 +165,10 @@ async function uploadResume(req, res) {
     });
 
   } catch (error) {
-    res.status(500).json({
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({
       success: false,
-      message: error.message || "Server error during resume processing"
+      message: error.message || "Server error during resume processing",
     });
   }
 }

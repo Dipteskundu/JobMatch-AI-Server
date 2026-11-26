@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-process.env.GEMINI_API_KEY = "";
+delete process.env.GEMINI_API_KEY;
 const { uploadResume } = await import("../controllers/resumeController.js");
 
 function createResponse() {
@@ -41,7 +41,28 @@ test("profile import returns a preview without writing to the database", async (
   assert.ok(response.body.data.skills.includes("Node.js"));
   assert.equal(response.body.data.skills.includes("C"), false);
   assert.deepEqual(response.body.data.profile.experience, []);
-  assert.match(response.body.warning, /basic keyword extraction/i);
+  assert.match(response.body.warning, /Local parsing could not confidently identify/);
+});
+
+test("profile import rejects text with no recognizable resume details", async () => {
+  const response = createResponse();
+  await uploadResume(
+    {
+      body: { profileImport: "true" },
+      user: { uid: "candidate-123" },
+      file: {
+        buffer: Buffer.from("A few unrelated words"),
+        originalname: "resume.txt",
+        mimetype: "text/plain",
+        size: 22,
+      },
+    },
+    response,
+  );
+
+  assert.equal(response.statusCode, 422);
+  assert.equal(response.body.success, false);
+  assert.match(response.body.message, /No recognizable profile details/);
 });
 
 test("profile import requires the authenticated candidate identity", async () => {

@@ -213,9 +213,9 @@ Body:
 #### 4) Preview resume details for profile import (requires token)
 **POST** `/api/resume/upload`
 
-Send `multipart/form-data` with a `resume` file and `profileImport=true`. Supported formats are PDF, DOC, DOCX, and TXT (maximum 10 MB).
+Send `multipart/form-data` with a `resume` file and `profileImport=true`. Supported formats are text-based PDF, DOCX, and TXT (maximum 4 MiB). Scanned/image-only PDFs and legacy DOC files are not supported.
 
-When `profileImport=true`, the endpoint returns extracted profile fields for review without saving the resume or changing the profile. The client applies selected values to the profile draft, which is persisted only when the user saves the profile.
+Resume extraction uses deterministic local parsing and does not call an AI API or require an AI API key. It returns recognized profile fields for review without saving the resume or changing the profile. Results can be partial for unusual layouts; the client applies selected values to the profile draft, which is persisted only when the user saves the profile.
 
 ---
 
@@ -266,6 +266,7 @@ cp .env.example .env
 ```env
 MONGODB_URI=
 MONGO_DB_NAME=
+# Optional for other AI-assisted features; resume extraction does not use it.
 GEMINI_API_KEY=
 # Optional (protected routes + realtime notifications)
 FIREBASE_SERVICE_ACCOUNT_JSON=
@@ -352,9 +353,9 @@ This backend is Vercel-ready:
 Steps:
 1. Create a separate Vercel project from this Git repository and use the repository root as the project root.
 2. Leave the Output Directory unset. Use Node.js `26.x`, `npm ci`, and `npm run build`.
-3. Set `MONGODB_URI` and `JWT_SECRET`. Set `MONGO_DB_NAME` only if the default database name is not appropriate. Configure `GEMINI_API_KEY`, `FIREBASE_API_KEY`, and `FIREBASE_WEB_CLIENT_ID` for the features that need them.
-4. Resume uploads accept files up to 10 MiB, but Vercel's default request-body limit is 4.5 MB. To preserve the existing upload limit, enable Fluid Compute, set function memory to Performance (4 GB) on a Pro or Enterprise plan, and set `VERCEL_SUPPORT_LARGE_REQUEST_BODY=1` for the Preview and Production environments. Otherwise, requests above 4.5 MB may be rejected before reaching Express. See [Vercel Function request body limits](https://vercel.com/docs/functions/limitations#request-body-size).
-5. Deploy and set the frontend project's `NEXT_PUBLIC_API_BASE_URL` to this backend project's Vercel origin.
+3. Set `MONGODB_URI` and `JWT_SECRET`. Set `MONGO_DB_NAME` only if the default database name is not appropriate. Configure `GEMINI_API_KEY`, `FIREBASE_API_KEY`, and `FIREBASE_WEB_CLIENT_ID` only for the separate features that need them; resume extraction does not use AI APIs.
+4. Resume uploads are capped at 4 MiB to stay below Vercel's default 4.5 MB request-body limit. No large-request-body option is required for supported resume uploads.
+5. Deploy and set the frontend project's `NEXT_PUBLIC_API_BASE_URL` to this backend project's Vercel origin. Smoke-test both resume flows with text-based PDF, DOCX, and TXT files under 4 MiB.
 
 Vercel's Node.js function instances are ephemeral. The API's in-memory rate-limit counters are per instance, not shared across all instances; use Vercel Firewall rate limiting or a shared store if a globally consistent limit is required.
 
