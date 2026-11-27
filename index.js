@@ -14,9 +14,14 @@ if (!process.env.VERCEL) {
 
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
-      // Port in use silently; change PORT in .env or let Vercel assign a port
-      return;
+      console.error(
+        `[server] Port ${PORT} is already in use. Stop the existing backend process or set PORT to another available port.`,
+      );
+    } else {
+      console.error(`[server] Failed to listen on port ${PORT}.`, err);
     }
+
+    process.exit(1);
   });
 }
 

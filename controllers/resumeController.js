@@ -57,11 +57,15 @@ async function uploadResume(req, res) {
     }
 
     // 1. Extract raw text from the file
-    const extractedText = await extractTextFromResume(file);
+    const extraction = await extractTextFromResume(file);
+    const extractedText = extraction.text;
 
     // Extraction is deterministic and local; no AI provider or API key is used.
     const extractedData = extractResumeProfile(extractedText);
-    const warning = getExtractionWarning(extractedData);
+    const warning = [
+      extraction.warning,
+      getExtractionWarning(extractedData),
+    ].filter(Boolean).join(" ");
 
     if (!hasProfileDetails(extractedData)) {
       return res.status(422).json({

@@ -8,7 +8,7 @@
     "build": "node --check api/index.js && node --input-type=module -e \"await import('./api/index.js')\"",
     "start": "node index.js",
     "seed:learning": "node scripts/seed-learning.js",
-    "test": "node --test tests/chatbotAccess.test.js tests/resumeController.test.js tests/localResumeExtraction.test.js tests/resumeParserService.test.js tests/dbConnection.test.js tests/apiFailureMode.test.js"
+    "test": "node --test tests/chatbotAccess.test.js tests/resumeController.test.js tests/localResumeExtraction.test.js tests/resumeParserService.test.js tests/dbConnection.test.js tests/apiFailureMode.test.js tests/localBackendStartup.test.js"
   },
   "engines": {
     "node": "26.x"
@@ -24,6 +24,8 @@
     "mammoth": "^1.11.0",
     "mongodb": "^5.7.0",
     "multer": "^2.1.1",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "^2.4.5",
+    "tesseract.js": "^7.0.0",
+    "@tesseract.js-data/eng": "^1.0.0"
   }
 }
