@@ -265,15 +265,14 @@ cp .env.example .env
 **.env example**
 ```env
 MONGODB_URI=
-MONGO_DB_NAME=
+MONGO_DB_NAME=skillmatchai
+JWT_SECRET=
+JWT_EXPIRES_IN=7d
 # Optional for other AI-assisted features; resume extraction does not use it.
 GEMINI_API_KEY=
-# Optional (protected routes + realtime notifications)
-FIREBASE_SERVICE_ACCOUNT_JSON=
-FIREBASE_PROJECT_ID=
-FIREBASE_CLIENT_EMAIL=
-FIREBASE_PRIVATE_KEY=
-FIREBASE_DATABASE_URL=
+# Optional Google sign-in configuration
+FIREBASE_API_KEY=
+FIREBASE_WEB_CLIENT_ID=
 PORT=5001
 ```
 
@@ -353,9 +352,9 @@ This backend is Vercel-ready:
 - `vercel.json` routes requests to the exported Express app in `api/index.js`, including `/`, `/health`, and `/api/*`. The root `index.js` remains the local development entry point.
 
 Steps:
-1. Create a separate Vercel project from this Git repository and use the repository root as the project root.
-2. Leave the Output Directory unset. Use Node.js `26.x`, `npm ci`, and `npm run build`.
-3. Set `MONGODB_URI` and `JWT_SECRET`. Set `MONGO_DB_NAME` only if the default database name is not appropriate. Configure `GEMINI_API_KEY`, `FIREBASE_API_KEY`, and `FIREBASE_WEB_CLIENT_ID` only for the separate features that need them; resume extraction does not use AI APIs.
+1. Create a Vercel project from the backend Git repository and set its Root Directory to `./` (the repository root).
+2. Leave the Output Directory unset. The project uses the Node.js `26.x` runtime and `npm run build`; Vercel installs dependencies from `package-lock.json`.
+3. Add `MONGODB_URI` and `JWT_SECRET` to the Vercel project's Environment Variables for every environment you will deploy (Preview and Production). `MONGO_DB_NAME` is optional and defaults to `skillmatchai`. Add `GEMINI_API_KEY`, `FIREBASE_API_KEY`, and `FIREBASE_WEB_CLIENT_ID` only for features that use them. Do not upload or commit your local `.env`; Vercel injects configured values at runtime.
 4. Resume uploads are capped at 4 MiB to stay below Vercel's default 4.5 MB request-body limit. No large-request-body option is required for supported resume uploads.
 5. Deploy and set the frontend project's `NEXT_PUBLIC_API_BASE_URL` to this backend project's Vercel origin. Smoke-test both resume flows with searchable and scanned PDF, DOCX, and TXT files under 4 MiB. Scanned PDF OCR is English-only and processes at most two scanned pages per upload.
 
