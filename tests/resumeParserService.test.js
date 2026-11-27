@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { extractTextFromResume } from "../services/resumeParserService.js";
+import { createScannedPdf } from "./fixtures/scannedResume.js";
 
 const require = createRequire(import.meta.url);
 const JSZip = require("jszip");
@@ -52,44 +53,99 @@ async function createDocx(text) {
 }
 
 test("extracts and normalizes text from TXT files", async () => {
-  const text = await extractTextFromResume({
+  const result = await extractTextFromResume({
     originalname: "resume.txt",
     mimetype: "text/plain",
     buffer: Buffer.from("Alex Candidate\r\n\r\n\r\nReact  Developer"),
   });
 
-  assert.equal(text, "Alex Candidate\n\nReact Developer");
+  assert.equal(result.text, "Alex Candidate\n\nReact Developer");
+  assert.equal(result.warning, "");
 });
 
 test("extracts text from DOCX files", async () => {
-  const text = await extractTextFromResume({
+  const result = await extractTextFromResume({
     originalname: "resume.docx",
     mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     buffer: await createDocx("Alex Candidate - React Developer"),
   });
 
-  assert.match(text, /Alex Candidate - React Developer/);
+  assert.match(result.text, /Alex Candidate - React Developer/);
 });
 
-test("extracts selectable text from PDF and rejects image-only/blank PDF content", async () => {
-  const text = await extractTextFromResume({
+test("extracts selectable text from PDFs", async () => {
+  const result = await extractTextFromResume({
     originalname: "resume.pdf",
     mimetype: "application/pdf",
     buffer: createPdf("BT /F1 14 Tf 50 750 Td (Resume Candidate) Tj ET"),
   });
-  assert.match(text, /Resume Candidate/);
+  assert.match(result.text, /Resume Candidate/);
+  assert.equal(result.warning, "");
+});
 
+test("uses local OCR to extract text from scanned resume pages", async () => {
+  const result = await extractTextFromResume({
+    originalname: "scanned-resume.pdf",
+    mimetype: "application/pdf",
+    buffer: createScannedPdf("Alex Candidate\nReact JavaScript Developer"),
+  });
+
+  assert.match(result.text, /Alex Candidate/i);
+  assert.match(result.text, /React/i);
+  assert.equal(result.warning, "");
+});
+
+test("limits OCR to two scanned pages and reports partial extraction", async () => {
+  const result = await extractTextFromResume({
+    originalname: "long-scanned-resume.pdf",
+    mimetype: "application/pdf",
+    buffer: createScannedPdf("React Developer", 3),
+  });
+
+  assert.match(result.text, /React Developer/i);
+  assert.equal((result.text.match(/React Developer/gi) || []).length, 2);
+  assert.match(result.warning, /Only 2 scanned PDF pages were processed/);
+});
+
+test("rejects PDFs with no readable text after OCR", async () => {
   await assert.rejects(
     extractTextFromResume({
       originalname: "scanned.pdf",
       mimetype: "application/pdf",
       buffer: createPdf(""),
     }),
-    { statusCode: 422, message: /No selectable text was found/ },
+    { statusCode: 422, message: /No readable text could be extracted/ },
   );
 });
 
-test("rejects empty documents and documents with no selectable text", async () => {
+test("logs sanitized PDF parser diagnostics without logging the upload filename", async () => {
+  const messages = [];
+  const originalError = console.error;
+  console.error = (...args) => messages.push(args.join(" "));
+
+  try {
+    await assert.rejects(
+      extractTextFromResume({
+        originalname: "private-candidate-name.pdf",
+        mimetype: "application/pdf",
+        buffer: Buffer.from("not a PDF"),
+      }),
+      {
+        statusCode: 422,
+        message: "This PDF is invalid or damaged. Export a valid PDF and try again.",
+      },
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /pdfParseVersion/);
+  assert.match(messages[0], /nodeVersion/);
+  assert.doesNotMatch(messages[0], /private-candidate-name|not a PDF/);
+});
+
+test("rejects empty documents and documents with no readable text", async () => {
   await assert.rejects(
     extractTextFromResume({
       originalname: "empty.txt",
@@ -105,7 +161,7 @@ test("rejects empty documents and documents with no selectable text", async () =
       mimetype: "text/plain",
       buffer: Buffer.from(" \r\n\t "),
     }),
-    { statusCode: 422, message: /No selectable text was found/ },
+    { statusCode: 422, message: /No readable text was found/ },
   );
 });
 

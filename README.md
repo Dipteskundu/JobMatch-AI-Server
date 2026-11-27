@@ -118,7 +118,7 @@ Job listing and recruiter views are designed to be filterable; modules are separ
 | Auth | Firebase Admin (verify Firebase ID tokens) |
 | AI | `@google/generative-ai` (Gemini) |
 | File upload | `multer` (memory storage) |
-| Resume parsing | `pdf-parse`, `mammoth` |
+| Resume parsing and OCR | `pdf-parse`, `mammoth`, `tesseract.js` (local English data) |
 | Deploy | Vercel (serverless) |
 
 ---
@@ -213,9 +213,9 @@ Body:
 #### 4) Preview resume details for profile import (requires token)
 **POST** `/api/resume/upload`
 
-Send `multipart/form-data` with a `resume` file and `profileImport=true`. Supported formats are text-based PDF, DOCX, and TXT (maximum 4 MiB). Scanned/image-only PDFs and legacy DOC files are not supported.
+Send `multipart/form-data` with a `resume` file and `profileImport=true`. Supported formats are PDF, DOCX, and TXT (maximum 4 MiB). Searchable PDF text is extracted directly; scanned PDFs use local English OCR for up to two scanned pages per upload. Legacy DOC files are not supported.
 
-Resume extraction uses deterministic local parsing and does not call an AI API or require an AI API key. It returns recognized profile fields for review without saving the resume or changing the profile. Results can be partial for unusual layouts; the client applies selected values to the profile draft, which is persisted only when the user saves the profile.
+Resume extraction uses deterministic local parsing and OCR; it does not call an AI API or send resume content to an external OCR service. It returns recognized profile fields for review without saving the resume or changing the profile. Results can be partial for unusual layouts or when scanned pages exceed the two-page OCR cap; the client applies selected values to the profile draft, which is persisted only when the user saves the profile.
 
 ---
 
@@ -283,6 +283,8 @@ npm start
 ```
 
 Server runs on: `http://localhost:5001`
+
+If startup reports that the port is already in use, stop the existing backend process before starting the updated server. The failed process exits with an explicit error instead of appearing to start while an older server continues handling requests.
 
 ---
 
@@ -355,7 +357,7 @@ Steps:
 2. Leave the Output Directory unset. Use Node.js `26.x`, `npm ci`, and `npm run build`.
 3. Set `MONGODB_URI` and `JWT_SECRET`. Set `MONGO_DB_NAME` only if the default database name is not appropriate. Configure `GEMINI_API_KEY`, `FIREBASE_API_KEY`, and `FIREBASE_WEB_CLIENT_ID` only for the separate features that need them; resume extraction does not use AI APIs.
 4. Resume uploads are capped at 4 MiB to stay below Vercel's default 4.5 MB request-body limit. No large-request-body option is required for supported resume uploads.
-5. Deploy and set the frontend project's `NEXT_PUBLIC_API_BASE_URL` to this backend project's Vercel origin. Smoke-test both resume flows with text-based PDF, DOCX, and TXT files under 4 MiB.
+5. Deploy and set the frontend project's `NEXT_PUBLIC_API_BASE_URL` to this backend project's Vercel origin. Smoke-test both resume flows with searchable and scanned PDF, DOCX, and TXT files under 4 MiB. Scanned PDF OCR is English-only and processes at most two scanned pages per upload.
 
 Vercel's Node.js function instances are ephemeral. The API's in-memory rate-limit counters are per instance, not shared across all instances; use Vercel Firewall rate limiting or a shared store if a globally consistent limit is required.
 
