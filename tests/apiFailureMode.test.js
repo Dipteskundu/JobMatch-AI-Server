@@ -12,7 +12,7 @@ process.env.MONGO_URI = "mongodb://127.0.0.1:9/jobmatch_unreachable_test";
 process.env.MONGO_DB_NAME = "jobmatch_unreachable_test";
 delete process.env.MONGODB_URI;
 
-const { default: app } = await import("../api/index.js");
+const { default: app } = await import("../server/app.js");
 
 function startServer() {
   return new Promise((resolve) => {
