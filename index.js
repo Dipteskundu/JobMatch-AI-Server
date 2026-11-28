@@ -1,7 +1,7 @@
 
 
 import "./config/dotenv.js";
-import app from "./api/index.js";
+import app from "./server/app.js";
 import { loadEnv } from "./config/env.js";
 
 const { env } = loadEnv();

@@ -1,242 +1,153 @@
-import "../config/dotenv.js";
-import express from "express";
-import cors from "cors";
+// api/index.js
+//
+// Vercel serverless entry point.
+//
+// This file is deliberately tiny and dependency-free. Its only jobs are:
+//
+//   1. install process-level safety nets before anything else can reject,
+//   2. lazy-load the real application (`server/app.js`) inside a try/catch,
+//   3. turn ANY load failure into a readable JSON response instead of Vercel's
+//      opaque `FUNCTION_INVOCATION_FAILED`.
+//
+// Before this wrapper existed, a module-scope failure anywhere in the import
+// graph (a native binding that would not load, a missing traced file, a thrown
+// error at module scope) made `compileUserCode()` throw and every single route —
+// including `/` and `/health` — returned HTTP 500 with no diagnostic at all.
+//
+// Nothing heavy is imported here on purpose: this module must be able to load
+// in order to explain why the rest of the app could not.
 
-import {
-  connectDB,
-  getDB,
-  getDbState,
-  isDbUnavailableError,
-  pingDB,
-  DB_UNAVAILABLE_MESSAGE,
-} from "../config/db.js";
-import { loadEnv } from "../config/env.js";
-import { migrateDemoPasswords } from "../services/passwordMigration.js";
+let appPromise = null;
+let loadError = null;
 
-import jobsRoutes from "../routes/jobs.routes.js";
-import companiesRoutes from "../routes/companies.routes.js";
-import authRoutes from "../routes/auth.routes.js";
-import dashboardRoutes from "../routes/dashboard.routes.js";
-import communicationRoutes from "../routes/communication.routes.js";
-import transparencyRoutes from "../routes/transparency.routes.js";
-import skillTestRoutes from "../routes/skillTest.routes.js";
-import resumeRoutes from "../routes/resume.routes.js";
-import skillGapRoutes from "../routes/skillGapRoutes.js";
-import preApplyRoutes from "../routes/preApply.routes.js";
-import commVerificationRoutes from "../routes/commVerification.routes.js";
-import applicationsRoutes from "../routes/applications.routes.js";
-import interviewsRoutes from "../routes/interviews.routes.js";
-import notificationsRoutes from "../routes/notifications.routes.js";
-import chatbotRoutes from "../routes/chatbot.routes.js";
-import tasksRoutes from "../routes/tasks.routes.js";
-import learningRoutes from "../routes/learning.routes.js";
-import interviewPrepRoutes from "../routes/interviewPrep.routes.js";
-import agentsRoutes from "../routes/agents.routes.js";
-import { ensureLearningIndexes } from "../config/learningIndexes.js";
-import { verifyToken } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/recruiterGate.js";
-
-const app = express();
-app.disable("x-powered-by");
-app.set("trust proxy", 1);
-
-// Learning Hub indexes: create once per process, after the first successful
-// connection, without blocking boot on failure.
-let indexPromise = null;
-function ensureIndexesOnce() {
-  if (!indexPromise) {
-    indexPromise = ensureLearningIndexes(getDB()).catch((error) => {
-      // Index setup failure is non-fatal; the app continues without auto-indexes
-    });
+function loadApp() {
+  if (!appPromise) {
+    appPromise = import("../server/app.js").then(
+      (module) => {
+        const app = module?.default;
+        if (typeof app !== "function") {
+          throw new Error(
+            "server/app.js did not export an Express application as its default export.",
+          );
+        }
+        // Vercel decides whether to inject its own req/res helpers with
+        // `typeof listener.listen !== 'function'` — the same test it uses to
+        // recognise an Express server. Exposing a real `listen` keeps Vercel's
+        // helpers off `res`, so Express keeps full control of `res.send`,
+        // `res.json` and the body parser.
+        handler.listen = (...args) => app.listen(...args);
+        return app;
+      },
+      (error) => {
+        loadError = error;
+        throw error;
+      },
+    );
   }
-  return indexPromise;
+  return appPromise;
 }
 
-const { env, errors, warnings, isProd } = loadEnv();
-
-// Surface configuration problems instead of swallowing them: a missing or
-// wrong env var used to fail every request with no clue in the logs.
-if (warnings.length && !isProd) {
-  warnings.forEach((msg) => console.warn(`[env] warning: ${msg}`));
+function describe(error) {
+  const message = String(error?.message || error || "Unknown error").replace(
+    /[\r\n\t]+/g,
+    " ",
+  );
+  return {
+    message: message.slice(0, 400),
+    name: String(error?.name || "Error").slice(0, 80),
+    code: error?.code ? String(error.code).slice(0, 80) : undefined,
+  };
 }
-if (errors.length) {
-  errors.forEach((msg) => console.error(`[env] error: ${msg}`));
-}
 
-const hasFatalEnv = errors.length > 0;
-
-app.use(
-  "/api",
-  cors({
-    origin: "*",
-    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: false,
-  }),
-);
-
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-app.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    service: "JobMatch-AI-Server",
-    envOk: !hasFatalEnv,
-    warnings: !isProd ? warnings : undefined,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// Liveness stays HTTP 200 (documented contract). `db` is derived from the
-// connection state rather than a timed ping: a cold Atlas connect takes ~6s and
-// must not be misread as "down", while a failed attempt answers immediately.
-app.get("/health", async (req, res) => {
-  const state = getDbState();
-
-  if (state === "error") {
-    return res.status(200).json({
-      success: true,
-      status: "degraded",
-      db: "down",
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  if (state === "idle") {
-    // Warm the connection in the background; the next check reports the result.
-    connectDB().catch(() => {});
-  }
-
-  if (state !== "connected") {
-    return res.status(200).json({
-      success: true,
-      status: "starting",
-      db: "connecting",
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  // Connected: confirm the handle still answers before claiming "up".
-  let db = "up";
+function sendJson(res, statusCode, payload) {
+  if (res.headersSent || res.writableEnded) return;
+  const body = JSON.stringify(payload);
   try {
-    await pingDB();
-  } catch {
-    db = "down";
-  }
-
-  return res.status(200).json({
-    success: true,
-    status: db === "up" ? "ok" : "degraded",
-    db,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.use(async (req, res, next) => {
-  if (hasFatalEnv) {
-    return res.status(500).json({
-      success: false,
-      message: "Server is misconfigured. Check environment variables.",
-      errors: !isProd ? errors : undefined,
-    });
-  }
-
-  try {
-    await connectDB();
-    await ensureIndexesOnce();
-    await migrateDemoPasswords(getDB());
-    return next();
+    res.statusCode = statusCode;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.end(body);
   } catch (error) {
-    error.status = error.status || 500;
-    return next(error);
+    console.error("[bootstrap] failed to write the diagnostic response:", error);
   }
-});
+}
 
-// Everything under /api needs a JWT except the guest-browsable reads below.
-const PUBLIC_GET = [
-  /^\/jobs$/,
-  /^\/jobs\/[^/]+$/,
-  /^\/jobs\/[^/]+\/fit$/,
-  /^\/companies$/,
-  /^\/v1\/companies$/,
-  /^\/v1\/learning\/paths$/,
-  /^\/v1\/learning\/paths\/[^/]+$/,
-  /^\/v1\/assessments$/,
-];
+function reportLoadFailure(res, error) {
+  const detail = describe(error);
+  console.error(
+    "[bootstrap] FAILED to load server/app.js:",
+    error?.stack || String(error),
+  );
 
-const ADMIN_ONLY = [/^\/admin\//, /^\/dashboard\/admin$/, /^\/v1\/admin\//];
-
-app.use("/api", (req, res, next) => {
-  const path = req.path.replace(/\/+$/, "") || "/";
-
-  if (req.method === "POST" && ["/auth/login", "/auth/register", "/auth/refresh", "/auth/logout", "/auth/google"].includes(path)) {
-    return next();
-  }
-  if (req.method === "POST" && path === "/chatbot/ask-public") {
-    return next();
-  }
-  if (req.method === "GET" && PUBLIC_GET.some((re) => re.test(path))) {
-    return next();
-  }
-
-  return verifyToken(req, res, () => {
-    if (ADMIN_ONLY.some((re) => re.test(path))) return requireAdmin(req, res, next);
-    return next();
-  });
-});
-
-app.use("/api/auth", authRoutes);
-app.use(jobsRoutes);
-app.use(companiesRoutes);
-app.use(dashboardRoutes);
-app.use(communicationRoutes);
-app.use(transparencyRoutes);
-app.use(skillTestRoutes);
-app.use(resumeRoutes);
-app.use(skillGapRoutes);
-app.use(preApplyRoutes);
-app.use(commVerificationRoutes);
-app.use(applicationsRoutes);
-app.use(interviewsRoutes);
-app.use(notificationsRoutes);
-app.use(chatbotRoutes);
-app.use(tasksRoutes);
-app.use(learningRoutes);
-app.use(interviewPrepRoutes);
-app.use(agentsRoutes);
-
-app.use((req, res) => {
-  res.status(404).json({
+  sendJson(res, 500, {
     success: false,
-    message: "Route not found",
+    stage: "bootstrap",
+    message: `The API failed to load: ${detail.message}`,
+    name: detail.name,
+    code: detail.code,
+    node: process.version,
+    // Only expose the stack outside production; the message above already
+    // carries the actionable part (module name, missing file, binding error).
+    stack: process.env.NODE_ENV === "production" ? undefined : error?.stack,
+    timestamp: new Date().toISOString(),
   });
-});
+}
 
-app.use((err, req, res, next) => {
-  if (err?.type === "entity.parse.failed") {
-    return res.status(400).json({
+async function handler(req, res) {
+  let app;
+  try {
+    app = await loadApp();
+  } catch (error) {
+    // Cached by loadApp(): a module-load failure is deterministic, so there is
+    // no point retrying it on every request — but we still answer each one.
+    return reportLoadFailure(res, error || loadError);
+  }
+
+  try {
+    return app(req, res);
+  } catch (error) {
+    console.error(
+      "[bootstrap] the request handler threw:",
+      error?.stack || String(error),
+    );
+    return sendJson(res, 500, {
       success: false,
-      message: "Invalid JSON payload.",
+      stage: "request",
+      message: "Internal server error",
+      node: process.version,
+      timestamp: new Date().toISOString(),
     });
   }
+}
 
-  const status = err.status || (isDbUnavailableError(err) ? 503 : 500);
-  const message =
-    err.userMessage ||
-    (status === 503
-      ? DB_UNAVAILABLE_MESSAGE
-      : status === 500
-        ? "Internal server error"
-        : err.message);
+// Vercel's `serverless-handler` skips its own helper injection when the
+// listener exposes `.listen`, which is how it recognises an Express server.
+// Until the app has loaded there is nothing to listen on; after a successful
+// load `loadApp()` replaces this with the real `app.listen`.
+handler.listen = function notLoadedYet() {
+  throw new Error(
+    "The API application has not loaded yet, so it cannot listen.",
+  );
+};
 
-  res.status(status).json({
-    success: false,
-    message,
-    error: !isProd ? err.message : undefined,
-    // Stacks are noise for expected failures (e.g. the database being down).
-    stack: !isProd && status === 500 ? err.stack : undefined,
-  });
+// ── Process-level safety nets ────────────────────────────────────────────────
+// Without these, a single unhandled rejection (Node >= 15 treats them as fatal)
+// or uncaught exception anywhere in the process takes down every in-flight
+// request and makes Vercel report FUNCTION_INVOCATION_FAILED with no stack.
+// We log loudly and stay alive: the affected request still fails through the
+// normal error middleware, but the function instance keeps serving.
+process.on("unhandledRejection", (reason) => {
+  console.error(
+    "[process] unhandledRejection:",
+    reason instanceof Error ? reason.stack || String(reason) : String(reason),
+  );
 });
 
-export default app;
+process.on("uncaughtException", (error) => {
+  console.error(
+    "[process] uncaughtException:",
+    error?.stack || String(error),
+  );
+});
+
+export default handler;

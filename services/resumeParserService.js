@@ -4,16 +4,53 @@ import path from "path";
 import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const pdfWorker = require("pdf-parse/worker");
-const { PDFParse } = require("pdf-parse");
-const { createWorker } = require("tesseract.js");
-const englishOcrData = require("@tesseract.js-data/eng");
-const TESSERACT_WORKER_PATH = require.resolve("tesseract.js/src/worker-script/node/index.js");
 const OCR_CACHE_PATH = path.join(os.tmpdir(), "jobmatch-tesseract-cache");
 const MAX_OCR_PAGES = 2;
 const OCR_PAGE_WIDTH = 1500;
 
-PDFParse.setWorker(pdfWorker.getData());
+// The PDF/OCR toolchain is loaded on first use instead of at module load.
+//
+// `require("pdf-parse/worker")` eagerly requires the NATIVE @napi-rs/canvas
+// binding, `tesseract.js` resolves its worker script and `PDFParse.setWorker()`
+// runs real setup code. All of that used to execute while `api/index.js` was
+// still being imported, so if any single native binding failed to load on the
+// host platform the whole Express app failed to import and Vercel answered
+// FUNCTION_INVOCATION_FAILED for every route — including `/` and `/health`,
+// which never touch a resume.
+//
+// Loading lazily confines any such failure to the resume endpoint, where it
+// becomes an actionable 503 instead of a total outage. The successful result is
+// cached so the cost is paid once per process.
+let pdfStackPromise = null;
+
+function loadPdfStack() {
+  if (!pdfStackPromise) {
+    pdfStackPromise = Promise.resolve().then(() => {
+      const pdfWorker = require("pdf-parse/worker");
+      const { PDFParse } = require("pdf-parse");
+      const { createWorker } = require("tesseract.js");
+      const englishOcrData = require("@tesseract.js-data/eng");
+      const TESSERACT_WORKER_PATH = require.resolve(
+        "tesseract.js/src/worker-script/node/index.js",
+      );
+
+      // Installs the worker factory pdfjs needs to render pages for OCR.
+      PDFParse.setWorker(pdfWorker.getData());
+
+      return {
+        pdfWorker,
+        PDFParse,
+        createWorker,
+        englishOcrData,
+        TESSERACT_WORKER_PATH,
+      };
+    });
+    // Cache the rejection too: a module/binding failure is deterministic, and
+    // retrying it per request would just turn a 503 into a cold-start storm.
+    pdfStackPromise.catch(() => {});
+  }
+  return pdfStackPromise;
+}
 
 const SUPPORTED_TYPES = new Map([
   [".pdf", "application/pdf"],
@@ -58,6 +95,16 @@ function getPackageVersion(packageName, entryPoint) {
   return "unknown";
 }
 
+// Version lookup must never throw: it runs from an error handler, and a
+// resolution failure there would mask the original problem.
+function safePackageVersion(packageName) {
+  try {
+    return getPackageVersion(packageName, require.resolve(packageName));
+  } catch {
+    return "unresolved";
+  }
+}
+
 function logPdfFailure(stage, error) {
   const rawMessage = String(error?.message || "Unknown parser error")
     .replace(/[\r\n\t]+/g, " ")
@@ -69,8 +116,8 @@ function logPdfFailure(stage, error) {
     errorCode: String(error?.code || "").slice(0, 80) || undefined,
     errorMessage: rawMessage,
     nodeVersion: process.version,
-    pdfParseVersion: getPackageVersion("pdf-parse", require.resolve("pdf-parse")),
-    ocrVersion: getPackageVersion("tesseract.js", require.resolve("tesseract.js")),
+    pdfParseVersion: safePackageVersion("pdf-parse"),
+    ocrVersion: safePackageVersion("tesseract.js"),
   };
   console.error("[resume-pdf] processing failed", JSON.stringify(details));
 }
@@ -97,7 +144,31 @@ function mapPdfError(error) {
 async function extractPdfText(buffer) {
   let parser;
   let ocrWorker;
-  let stage = "pdf_text";
+  let stage = "pdf_toolchain";
+
+  // Load the native/worker toolchain first so a binding failure is reported as
+  // a clean, retryable 503 for this endpoint rather than bubbling up as an
+  // unexpected 500.
+  let pdfStack;
+  try {
+    pdfStack = await loadPdfStack();
+  } catch (error) {
+    logPdfFailure(stage, error);
+    throw new ResumeFileError(
+      "PDF processing is unavailable on this server right now. Upload a DOCX or TXT resume, or try again later.",
+      503,
+    );
+  }
+
+  const {
+    pdfWorker,
+    PDFParse,
+    createWorker,
+    englishOcrData,
+    TESSERACT_WORKER_PATH,
+  } = pdfStack;
+
+  stage = "pdf_text";
   try {
     parser = new PDFParse({
       data: buffer,

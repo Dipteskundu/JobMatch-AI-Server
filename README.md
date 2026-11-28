@@ -77,6 +77,9 @@ flowchart LR
 ### 🧱 Entry points
 - Local server entry: `index.js`
 - Serverless entry (Vercel): `api/index.js` + `vercel.json`
+- Express application: `server/app.js` (`api/index.js` lazy-loads it and reports
+  a readable JSON error if the bundle ever fails to load, instead of Vercel's
+  `FUNCTION_INVOCATION_FAILED`)
 
 ---
 
@@ -349,7 +352,7 @@ curl -X POST http://localhost:5001/api/auth/sync-user \
 
 ### ✅ Deploy to Vercel (recommended)
 This backend is Vercel-ready:
-- `vercel.json` routes requests to the exported Express app in `api/index.js`, including `/`, `/health`, and `/api/*`. The root `index.js` remains the local development entry point.
+- `vercel.json` rewrites `/`, `/health`, and `/api/*` to the serverless entry `api/index.js`. That file is a thin bootstrap that lazy-loads the Express app in `server/app.js`; if the app fails to load it responds with a JSON diagnostic instead of `FUNCTION_INVOCATION_FAILED`. The root `index.js` remains the local development entry point and imports `server/app.js` directly.
 
 Steps:
 1. Create a Vercel project from the backend Git repository and set its Root Directory to `./` (the repository root).
